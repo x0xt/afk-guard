@@ -49,7 +49,7 @@ afk-guard [--idle SECS] [--max-interval SECS]
 |---|---|---|
 | `--idle` | `8` | Seconds of no real input before injecting |
 | `--max-interval` | `270` | Upper bound for random interval (0–N seconds) |
-| `--logs` | — | Live-tail the log at `/tmp/afk-guard.log` |
+| `--logs` | — | Tail `/tmp/afk-guard.log` live; does not start the daemon |
 
 Runs until Ctrl+C.
 
