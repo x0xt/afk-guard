@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
@@ -19,12 +20,14 @@
 
 #define DEVICE_NAME     "Gaming Peripheral"
 #define IDLE_THRESHOLD  8
-#define INTERVAL_MAX_S  270     /* 0 – 4m30s uniform, whole seconds */
+#define INTERVAL_MAX_S  270
 #define JITTER_MAX      3
+#define LOG_FILE        "/tmp/afk-guard.log"
 
-static atomic_long  last_real_input;
+static atomic_long           last_real_input;
 static volatile sig_atomic_t running = 1;
-static int          uinput_fd = -1;
+static int                   uinput_fd = -1;
+static FILE                 *logfp = NULL;
 
 static void sig_handler(int sig) { (void)sig; running = 0; }
 
@@ -32,6 +35,24 @@ static long now_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec;
+}
+
+static void log_msg(const char *fmt, ...) {
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    char ts[16];
+    strftime(ts, sizeof(ts), "%H:%M:%S", tm);
+
+    va_list ap;
+    printf("[%s] ", ts);
+    va_start(ap, fmt); vprintf(fmt, ap); va_end(ap);
+    fflush(stdout);
+
+    if (logfp) {
+        fprintf(logfp, "[%s] ", ts);
+        va_start(ap, fmt); vfprintf(logfp, fmt, ap); va_end(ap);
+        fflush(logfp);
+    }
 }
 
 /* Box-Muller — only used for hold durations, not intervals */
@@ -51,14 +72,13 @@ static int iclamp(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-
 static void emit(int fd, int type, int code, int val) {
     struct input_event ev = {0};
     ev.type  = type;
     ev.code  = code;
     ev.value = val;
     if (write(fd, &ev, sizeof(ev)) < 0)
-        perror("uinput write");
+        log_msg("uinput write error: %s\n", strerror(errno));
 }
 
 static void emit_syn(int fd) { emit(fd, EV_SYN, SYN_REPORT, 0); }
@@ -87,17 +107,15 @@ static void inject_mouse_jitter(int fd) {
 static int setup_uinput(void) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) {
-        perror("open /dev/uinput (are you in the 'input' group?)");
+        log_msg("open /dev/uinput failed: %s (are you in the 'input' group?)\n", strerror(errno));
         return -1;
     }
 
     ioctl(fd, UI_SET_EVBIT, EV_KEY);
     ioctl(fd, UI_SET_KEYBIT, KEY_SPACE);
-
     ioctl(fd, UI_SET_EVBIT, EV_REL);
     ioctl(fd, UI_SET_RELBIT, REL_X);
     ioctl(fd, UI_SET_RELBIT, REL_Y);
-
     ioctl(fd, UI_SET_EVBIT, EV_SYN);
 
     struct uinput_setup usetup = {0};
@@ -107,8 +125,14 @@ static int setup_uinput(void) {
     usetup.id.version = 1;
     strncpy(usetup.name, DEVICE_NAME, UINPUT_MAX_NAME_SIZE - 1);
 
-    if (ioctl(fd, UI_DEV_SETUP, &usetup) < 0) { perror("UI_DEV_SETUP"); close(fd); return -1; }
-    if (ioctl(fd, UI_DEV_CREATE) < 0)          { perror("UI_DEV_CREATE"); close(fd); return -1; }
+    if (ioctl(fd, UI_DEV_SETUP, &usetup) < 0) {
+        log_msg("UI_DEV_SETUP failed: %s\n", strerror(errno));
+        close(fd); return -1;
+    }
+    if (ioctl(fd, UI_DEV_CREATE) < 0) {
+        log_msg("UI_DEV_CREATE failed: %s\n", strerror(errno));
+        close(fd); return -1;
+    }
 
     usleep(100000);
     return fd;
@@ -119,7 +143,7 @@ static void *monitor_thread(void *arg) {
 
     glob_t gl;
     if (glob("/dev/input/event*", 0, NULL, &gl) != 0) {
-        fputs("[monitor] no input devices found\n", stderr);
+        log_msg("[monitor] no input devices found\n");
         return NULL;
     }
 
@@ -143,12 +167,12 @@ static void *monitor_thread(void *arg) {
     globfree(&gl);
 
     if (nfds == 0) {
-        fputs("[monitor] couldn't open any devices — run: sudo usermod -aG input $USER\n", stderr);
+        log_msg("[monitor] couldn't open any devices — run: sudo usermod -aG input $USER\n");
         free(pfds);
         return NULL;
     }
 
-    printf("[monitor] watching %d input devices\n", nfds);
+    log_msg("[monitor] watching %d input devices\n", nfds);
 
     struct input_event ev;
     while (running) {
@@ -169,13 +193,21 @@ static void *monitor_thread(void *arg) {
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s [--idle SECS] [--max-interval SECS]\n"
+        "Usage: %s [--idle SECS] [--max-interval SECS] [--logs]\n"
         "  --idle          seconds of no real input before injecting (default %d)\n"
-        "  --max-interval  upper bound for random interval 0..N secs (default %d)\n",
+        "  --max-interval  upper bound for random interval 0..N secs (default %d)\n"
+        "  --logs          live-tail the log at " LOG_FILE "\n",
         prog, IDLE_THRESHOLD, INTERVAL_MAX_S);
 }
 
 int main(int argc, char *argv[]) {
+    /* --logs: just tail the log file and exit */
+    if (argc == 2 && strcmp(argv[1], "--logs") == 0) {
+        execlp("tail", "tail", "-f", LOG_FILE, NULL);
+        perror("tail");
+        return 1;
+    }
+
     long idle_threshold = IDLE_THRESHOLD;
     int  interval_max_s = INTERVAL_MAX_S;
 
@@ -185,63 +217,67 @@ int main(int argc, char *argv[]) {
         else { usage(argv[0]); return 1; }
     }
 
+    logfp = fopen(LOG_FILE, "a");
+    if (!logfp)
+        fprintf(stderr, "warning: couldn't open %s for logging: %s\n", LOG_FILE, strerror(errno));
+
     srand((unsigned)time(NULL) ^ (unsigned)getpid());
     signal(SIGINT,  sig_handler);
     signal(SIGTERM, sig_handler);
 
-    printf("afk-guard  idle=%lds  interval=0-%ds\n",
-           idle_threshold, interval_max_s);
+    log_msg("afk-guard started  idle=%lds  interval=0-%ds  log=%s\n",
+            idle_threshold, interval_max_s, LOG_FILE);
 
     uinput_fd = setup_uinput();
-    if (uinput_fd < 0) return 1;
-    printf("[uinput] virtual device ready\n");
+    if (uinput_fd < 0) { if (logfp) fclose(logfp); return 1; }
+    log_msg("[uinput] virtual device ready\n");
 
     atomic_store(&last_real_input, now_sec());
 
     pthread_t mon;
     if (pthread_create(&mon, NULL, monitor_thread, NULL) != 0) {
-        perror("pthread_create");
+        log_msg("pthread_create failed: %s\n", strerror(errno));
         ioctl(uinput_fd, UI_DEV_DESTROY);
         close(uinput_fd);
+        if (logfp) fclose(logfp);
         return 1;
     }
 
     while (running) {
-        long sleep_sec = rand() % (interval_max_s + 1);   /* 0..interval_max_s uniform */
-        long sleep_ms  = sleep_sec * 1000L;
+        long sleep_sec = rand() % (interval_max_s + 1);
+        log_msg("[timer] next injection in %lds\n", sleep_sec);
 
-        printf("[timer] next injection in %lds\n", sleep_sec);
-
-        for (long slept = 0; running && slept < sleep_ms; slept += 100)
+        for (long slept = 0; running && slept < sleep_sec * 1000L; slept += 100)
             usleep(100000);
         if (!running) break;
 
         long idle = now_sec() - atomic_load(&last_real_input);
         if (idle < idle_threshold) {
-            printf("[inject] user active (idle=%lds) — skipping\n", idle);
+            log_msg("[inject] user active (idle=%lds) — skipping\n", idle);
             continue;
         }
 
         int roll = rand() % 100;
         if (roll < 55) {
             int hold = iclamp((int)gaussian(100, 30), 40, 200);
-            printf("[inject] space %dms  (idle=%lds)\n", hold, idle);
+            log_msg("[inject] space %dms  (idle=%lds)\n", hold, idle);
             inject_space(uinput_fd, hold);
         } else if (roll < 85) {
-            printf("[inject] mouse jitter  (idle=%lds)\n", idle);
+            log_msg("[inject] mouse jitter  (idle=%lds)\n", idle);
             inject_mouse_jitter(uinput_fd);
         } else {
             int hold = iclamp((int)gaussian(70, 20), 30, 150);
-            printf("[inject] space %dms + jitter  (idle=%lds)\n", hold, idle);
+            log_msg("[inject] space %dms + jitter  (idle=%lds)\n", hold, idle);
             inject_space(uinput_fd, hold);
             usleep((useconds_t)(30 + rand() % 100) * 1000);
             inject_mouse_jitter(uinput_fd);
         }
     }
 
-    printf("\nafk-guard stopping\n");
+    log_msg("afk-guard stopped\n");
     pthread_join(mon, NULL);
     ioctl(uinput_fd, UI_DEV_DESTROY);
     close(uinput_fd);
+    if (logfp) fclose(logfp);
     return 0;
 }
