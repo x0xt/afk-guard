@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+afk-guard &
+GUARD=$!
+trap "kill $GUARD 2>/dev/null" EXIT
+"$@"

@@ -16,7 +16,7 @@ Because input is injected at the kernel level, it works across any game engine o
 
 ## Requirements
 
-- Linux with a kernel that has `uinput` support (virtually all modern distros)
+- Linux with `uinput` support (virtually all modern distros)
 - `gcc` and `make`
 - Wayland or X11
 
@@ -29,32 +29,17 @@ cd afk-guard
 ```
 
 The script will:
-1. Build the binary
-2. Install it to `~/.local/bin/`
-3. Add your user to the `input` group (needed for `/dev/uinput` and evdev access)
-4. Install and enable a systemd user service so it starts automatically on login
+1. Build the binary and install it to `~/.local/bin/`
+2. Add your user to the `input` group (needed for `/dev/uinput` and evdev access)
+3. Install the systemd user service
+4. Ask if you want afk-guard to **autostart on login**
+5. Ask if you want **Steam per-game setup instructions**
 
-> **Note:** If your user wasn't already in the `input` group, log out and back in after running the script for the group change to take effect.
+> **Note:** If your user wasn't already in the `input` group, log out and back in after running the script.
 
 ## Usage
 
-After install, afk-guard runs automatically in the background as a systemd user service.
-
-```bash
-# check status
-systemctl --user status afk-guard
-
-# view live logs
-journalctl --user -u afk-guard -f
-
-# stop
-systemctl --user stop afk-guard
-
-# disable autostart
-systemctl --user disable afk-guard
-```
-
-### Manual / custom run
+### Run manually
 
 ```bash
 afk-guard [--idle SECS] [--max-interval SECS]
@@ -65,10 +50,42 @@ afk-guard [--idle SECS] [--max-interval SECS]
 | `--idle` | `8` | Seconds of no real input before injecting |
 | `--max-interval` | `270` | Upper bound for random interval (0–N seconds) |
 
+Runs until Ctrl+C.
+
 Example — inject after 5s idle, interval capped at 90s:
 ```bash
 afk-guard --idle 5 --max-interval 90
 ```
+
+### Run as a background service
+
+```bash
+# enable autostart on login
+systemctl --user enable afk-guard
+
+# start now
+systemctl --user start afk-guard
+
+# check status / logs
+systemctl --user status afk-guard
+journalctl --user -u afk-guard -f
+
+# stop
+systemctl --user stop afk-guard
+```
+
+### Per-game via Steam
+
+afk-guard ships a `game-wrap` helper that starts afk-guard when a game launches and kills it cleanly when the game exits.
+
+1. Open Steam → right-click your game → **Properties → General**
+2. Paste into the **Launch Options** field:
+
+```
+game-wrap %command%
+```
+
+If you use this, leave the systemd autostart disabled so you don't end up with duplicate instances.
 
 ## How it auto-pauses
 
