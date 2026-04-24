@@ -2,7 +2,7 @@
 set -e
 
 BINARY="afk-guard"
-INSTALL_DIR="$HOME/.local/bin"
+INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE="afk-guard.service"
 
@@ -13,11 +13,10 @@ need make
 echo "==> building..."
 make
 
-echo "==> installing binaries to $INSTALL_DIR/"
-mkdir -p "$INSTALL_DIR"
-cp "$BINARY" "$INSTALL_DIR/"
-cp game-wrap "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/game-wrap"
+echo "==> installing binaries to $INSTALL_DIR/ (requires sudo)"
+sudo cp "$BINARY" "$INSTALL_DIR/"
+sudo cp game-wrap "$INSTALL_DIR/"
+sudo chmod +x "$INSTALL_DIR/game-wrap" "$INSTALL_DIR/$BINARY"
 
 if ! groups | grep -qw input; then
     echo "==> adding $USER to input group (required for /dev/uinput and evdev access)"

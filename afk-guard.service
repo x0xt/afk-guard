@@ -3,7 +3,7 @@ Description=AFK Guard - Anti-kick input injector
 After=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/afk-guard
+ExecStart=/usr/local/bin/afk-guard
 Restart=always
 RestartSec=5
 
