@@ -29,7 +29,7 @@ cd afk-guard
 ```
 
 The script will:
-1. Build the binary and install it to `~/.local/bin/`
+1. Build the binary and install it to `/usr/local/bin/`
 2. Add your user to the `input` group (needed for `/dev/uinput` and evdev access)
 3. Install the systemd user service
 4. Ask if you want afk-guard to **autostart on login**
@@ -49,12 +49,21 @@ afk-guard [--idle SECS] [--max-interval SECS]
 |---|---|---|
 | `--idle` | `8` | Seconds of no real input before injecting |
 | `--max-interval` | `270` | Upper bound for random interval (0–N seconds) |
+| `--logs` | — | Live-tail the log at `/tmp/afk-guard.log` |
 
 Runs until Ctrl+C.
 
 Example — inject after 5s idle, interval capped at 90s:
 ```bash
 afk-guard --idle 5 --max-interval 90
+```
+
+### Logs
+
+afk-guard writes timestamped logs to `/tmp/afk-guard.log` for the duration of your session (cleared on reboot). To watch them live in a separate terminal:
+
+```bash
+afk-guard --logs
 ```
 
 ### Run as a background service
@@ -66,9 +75,9 @@ systemctl --user enable afk-guard
 # start now
 systemctl --user start afk-guard
 
-# check status / logs
+# check status / live logs
 systemctl --user status afk-guard
-journalctl --user -u afk-guard -f
+afk-guard --logs
 
 # stop
 systemctl --user stop afk-guard
@@ -85,8 +94,20 @@ afk-guard ships a `game-wrap` helper that starts afk-guard when a game launches 
 game-wrap %command%
 ```
 
+If you have other launch options (gamemode, Proton flags, etc.) keep `game-wrap` directly before `%command%`:
+
+```
+PROTON_ENABLE_NVAPI=1 gamemoderun game-wrap %command%
+```
+
 If you use this, leave the systemd autostart disabled so you don't end up with duplicate instances.
 
 ## How it auto-pauses
 
 afk-guard opens every `/dev/input/event*` device and polls for real keyboard, mouse, or controller activity. Any real input resets the idle clock. It will never inject while you're actively playing — only when you've stepped away.
+
+---
+
+## What this is not
+
+afk-guard does not automate gameplay, interact with the game in any meaningful way, or give you any advantage over other players. It presses spacebar or wiggles the mouse by a pixel or two — that's it. It exists for one reason: so you can step away from your desk for a few minutes without getting booted from a server you've been waiting in. Think of it as a "be right back" button, not a bot.
